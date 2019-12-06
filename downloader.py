@@ -1,4 +1,4 @@
-import urllib.request
+import requests
 import argparse
 import urllib.parse
 import os.path
@@ -14,31 +14,44 @@ DEFAULT_BLOCK_SIZE = 1024 * 512
 class Worker(threading.Thread):
     def __init__(self, url, file_name, content_length, block_map, remaining_blocks):
         super().__init__(daemon=True)
+        self.session = requests.Session()
         self.url = url
         self.file_name = file_name
         self.block_map = block_map
         self.content_length = content_length
         self.remaining_blocks = remaining_blocks
 
-    def iter_range(self):
-        block_size = self.content_length // len(self.block_map)
-        for block in self.remaining_blocks:
-            yield block, block * block_size, min(self.content_length, (block + 1) * block_size)
+    @property
+    def ranges(self):
+        for b in self.remaining_blocks:
+            yield b * DEFAULT_BLOCK_SIZE, min(self.content_length, (b + 1) * DEFAULT_BLOCK_SIZE)
+
+    @property
+    def blocks(self):
+        buffer = bytearray(DEFAULT_BLOCK_SIZE)
+        for start, end in self.ranges:
+            r = self.session.get(self.url, stream=True,
+                                 headers={'Range': f'bytes={start}-{end - 1}',
+                                          'Content-Encoding': 'identity'})
+            if r.status_code != requests.codes.partial_content:
+                raise RuntimeError()
+            block_size = end - start
+            num = 0
+            for content in r.iter_content(block_size):
+                if num + len(content) < block_size:
+                    buffer[num:num + len(content)] = content
+                    num += len(content)
+                else:
+                    remain = num + len(content) - block_size
+                    buffer[num:] = content[:len(content) - remain]
+                    yield buffer[:block_size]
 
     def run(self):
         with open(self.file_name, 'r+b') as f:
-            buffer = bytearray(DEFAULT_BLOCK_SIZE)
-            for block, start, end in self.iter_range():
+            for i, (start, end), b in zip(self.remaining_blocks, self.ranges, self.blocks):
                 f.seek(start)
-                request = urllib.request.Request(self.url, headers={'Range': f'bytes={start}-{end - 1}'})
-                current_size = end - start
-                with urllib.request.urlopen(request) as response:
-                    num_read = 0
-                    while num_read < current_size:
-                        current_read = response.readinto(buffer)
-                        f.write(buffer[0:current_read])
-                        num_read += current_read
-                self.block_map[block] = True
+                f.write(b)
+                self.block_map[i] = True
 
 
 def create_file(file_name, content_length):
@@ -49,13 +62,10 @@ def create_file(file_name, content_length):
 
 
 def get_metadata(url):
-    head_req = urllib.request.Request(url, method='HEAD')
-    with urllib.request.urlopen(head_req) as response:
-        headers = dict(response.getheaders())
-        content_length = int(headers['Content-Length'])
-        content_type = headers['Content-Type']
-        accept_ranges = headers.get('Accept-Ranges', 'none') == 'bytes'
-    return content_type, content_length, accept_ranges
+    headers = requests.head(url).headers
+    content_length = int(headers['Content-Length'])
+    accept_ranges = headers.get('Accept-Ranges', 'none') == 'bytes'
+    return content_length, accept_ranges
 
 
 def download_url(url, num_threads, resume):
@@ -64,7 +74,7 @@ def download_url(url, num_threads, resume):
     print(f'Trying to download {url} to {os.path.abspath(file_name)}')
 
     print('Fetching metadata of the file')
-    content_type, content_length, accept_ranges = get_metadata(url)
+    content_length, accept_ranges = get_metadata(url)
 
     if resume and not accept_ranges:
         print('HTTP range request not supported, ignore -c')
@@ -96,8 +106,8 @@ def download_url(url, num_threads, resume):
             t.start()
             threads.append(t)
         while any(t.is_alive() for t in threads):
-            time.sleep(0.1)
             print(''.join('*' if b else '-' for b in block_map))
+            time.sleep(0.5)
         for t in threads:
             t.join()
         print(f'Elapsed {time.time() - start:.2f} secs')
