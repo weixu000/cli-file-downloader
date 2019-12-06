@@ -3,11 +3,12 @@ import argparse
 import urllib.parse
 import os.path
 import threading
-import shutil
 import time
 import os.path
 import math
 import os
+
+DEFAULT_BLOCK_SIZE = 1024 * 512
 
 
 class Worker(threading.Thread):
@@ -26,11 +27,17 @@ class Worker(threading.Thread):
 
     def run(self):
         with open(self.file_name, 'r+b') as f:
+            buffer = bytearray(DEFAULT_BLOCK_SIZE)
             for block, start, end in self.iter_range():
                 f.seek(start)
                 request = urllib.request.Request(self.url, headers={'Range': f'bytes={start}-{end - 1}'})
+                current_size = end - start
                 with urllib.request.urlopen(request) as response:
-                    shutil.copyfileobj(response, f)
+                    num_read = 0
+                    while num_read < current_size:
+                        current_read = response.readinto(buffer)
+                        f.write(buffer[0:current_read])
+                        num_read += current_read
                 self.block_map[block] = True
 
 
@@ -51,9 +58,6 @@ def get_metadata(url):
     return content_type, content_length, accept_ranges
 
 
-DEFAULT_BLOCK_SIZE = 1024 * 1024
-
-
 def download_url(url, num_threads, resume):
     url_components = urllib.parse.urlparse(url)
     file_name = os.path.basename(urllib.parse.unquote(url_components.path)) or 'index.html'
@@ -66,7 +70,7 @@ def download_url(url, num_threads, resume):
         print('HTTP range request not supported, ignore -c')
         resume = False
 
-    num_blocks = min(100, int(math.ceil(content_length / DEFAULT_BLOCK_SIZE)))
+    num_blocks = int(math.ceil(content_length / DEFAULT_BLOCK_SIZE))
     print(f'Split file into {num_blocks} blocks')
 
     if resume and os.path.exists(file_name) and os.path.getsize(file_name) == content_length + num_blocks:
@@ -80,7 +84,7 @@ def download_url(url, num_threads, resume):
         block_map = [False] * num_blocks
 
     print('Downloading file')
-    num_threads = num_threads if resume else 1
+    num_threads = num_threads if accept_ranges else 1
     remaining_blocks = [i for i, b in enumerate(block_map) if not b]
     blocks_for_worker = int(math.ceil(len(remaining_blocks) / num_threads))
     try:
