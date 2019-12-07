@@ -17,30 +17,6 @@ def file_SHA256(file_name, block_size=4096):
     return sha256_hash.hexdigest()
 
 
-class TestFile(unittest.TestCase):
-    """
-    test downloader.create_file
-    """
-
-    def test_empty_file(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_file = os.path.join(temp_dir, 'test.data')
-            downloader.create_file(output_file, 0)
-            self.assertEqual(os.path.getsize(output_file), 0)
-
-    def test_nonempty_file(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_file = os.path.join(temp_dir, 'test.data')
-            file_size = random.randrange(1, 1000)
-            downloader.create_file(output_file, file_size)
-            self.assertEqual(os.path.getsize(output_file), file_size)
-
-    def test_existing_file(self):
-        with tempfile.NamedTemporaryFile() as temp_file:
-            with self.assertRaises(Exception):
-                downloader.create_file(temp_file, 1000)
-
-
 class TestBlockMap(unittest.TestCase):
     def test_load_block_map(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -59,6 +35,11 @@ class TestBlockMap(unittest.TestCase):
 
         splits = list(workers.split_remaining_blocks(block_map, num_workers))
         self.assertEqual(sum(splits, []), [i for i, b in enumerate(block_map) if not b])
+
+
+URL = 'https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe'
+FILE_NAME = 'Miniconda3-latest-Windows-x86_64.exe'
+SHA256 = 'f18060cc0bb50ae75e4d602b7ce35197c8e31e81288d069b758594f1bb46ab45'
 
 
 class TestWorker(unittest.TestCase):
@@ -87,14 +68,33 @@ class TestWorker(unittest.TestCase):
             ret += block
         self.assertEqual(content, ret)
 
+    def test_range_walker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            content_length, _ = downloader.get_metadata(URL)
+            file_name = os.path.join(temp_dir, FILE_NAME)
+            downloader.create_file(file_name, content_length)
+            num_blocks = workers.get_num_blocks(content_length)
+            t = workers.RangeWorker(URL, file_name, content_length,
+                                    [False] * num_blocks, list(range(num_blocks)))
+            t.run()
+            self.assertEqual(file_SHA256(file_name), SHA256)
+
+    def test_content_walker(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            content_length, _ = downloader.get_metadata(URL)
+            file_name = os.path.join(temp_dir, FILE_NAME)
+            downloader.create_file(file_name, content_length)
+            num_blocks = workers.get_num_blocks(content_length)
+            t = workers.ContentWorker(URL, file_name, content_length, [False] * num_blocks)
+            t.run()
+            self.assertEqual(file_SHA256(file_name), SHA256)
+
 
 class TestDownloader(unittest.TestCase):
     def test_multithreaded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            downloader.download_url('https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe',
-                                    5, False, temp_dir)
-            self.assertEqual(file_SHA256('Miniconda3-latest-Windows-x86_64.exe'),
-                             'f18060cc0bb50ae75e4d602b7ce35197c8e31e81288d069b758594f1bb46ab45')
+            downloader.download_url(URL, 5, False, temp_dir)
+            self.assertEqual(file_SHA256(os.path.join(temp_dir, FILE_NAME)), SHA256)
 
 
 if __name__ == '__main__':

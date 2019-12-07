@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import requests
 
 DEFAULT_BLOCK_SIZE = 1024 * 512
+RETRY = 5
 
 
 def get_num_blocks(content_length, block_size=DEFAULT_BLOCK_SIZE):
@@ -107,13 +108,21 @@ class ContentWorker(Worker):
     @property
     def blocks(self):
         # Request the whole file
-        r = self.session.get(self.url, stream=True)
-        if r.status_code != requests.codes.ok:
-            raise RuntimeError()
-        remaining_data = b''
-        for block_id, start, end in self.ranges:
-            block, remaining_data = iter_content(r, end - start, remaining_data)
-            yield block_id, start, end, block
+        for i_retry in range(RETRY):
+            try:
+                r = self.session.get(self.url, stream=True)
+                if r.status_code != requests.codes.ok:
+                    raise RuntimeError()
+                remaining_data = b''
+                for block_id, start, end in self.ranges:
+                    block, remaining_data = iter_content(r, end - start, remaining_data)
+                    yield block_id, start, end, block
+            except:
+                print(f'{self.ident} retrying {i_retry + 1} times')
+            else:
+                break
+        else:
+            print(f'{self.ident} retry failed')
 
 
 class RangeWorker(Worker):
@@ -124,10 +133,17 @@ class RangeWorker(Worker):
     def blocks(self):
         # Request specific range of the file
         for block_id, start, end in self.ranges:
-            r = self.session.get(self.url, stream=True,
-                                 headers={'Range': f'bytes={start}-{end - 1}',
-                                          'Content-Encoding': 'identity'})
-            if r.status_code != requests.codes.partial_content:
-                raise RuntimeError()
-            block, _ = iter_content(r, end - start, b'')
-            yield block_id, start, end, block
+            for i_retry in range(RETRY):
+                try:
+                    r = self.session.get(self.url, stream=True,
+                                         headers={'Range': f'bytes={start}-{end - 1}',
+                                                  'Content-Encoding': 'identity'})
+                    if r.status_code != requests.codes.partial_content:
+                        continue
+                    block, _ = iter_content(r, end - start, b'')
+                    yield block_id, start, end, block
+                    break
+                except:
+                    print(f'{self.ident} retrying {i_retry + 1} times')
+            else:
+                print(f'{self.ident} retry failed')
