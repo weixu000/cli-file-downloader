@@ -2,56 +2,12 @@ import requests
 import argparse
 import urllib.parse
 import os.path
-import threading
 import time
 import os.path
 import math
 import os
 
-DEFAULT_BLOCK_SIZE = 1024 * 512
-
-
-class Worker(threading.Thread):
-    def __init__(self, url, file_name, content_length, block_map, remaining_blocks):
-        super().__init__(daemon=True)
-        self.session = requests.Session()
-        self.url = url
-        self.file_name = file_name
-        self.block_map = block_map
-        self.content_length = content_length
-        self.remaining_blocks = remaining_blocks
-
-    @property
-    def ranges(self):
-        for b in self.remaining_blocks:
-            yield b * DEFAULT_BLOCK_SIZE, min(self.content_length, (b + 1) * DEFAULT_BLOCK_SIZE)
-
-    @property
-    def blocks(self):
-        buffer = bytearray(DEFAULT_BLOCK_SIZE)
-        for start, end in self.ranges:
-            r = self.session.get(self.url, stream=True,
-                                 headers={'Range': f'bytes={start}-{end - 1}',
-                                          'Content-Encoding': 'identity'})
-            if r.status_code != requests.codes.partial_content:
-                raise RuntimeError()
-            block_size = end - start
-            num = 0
-            for content in r.iter_content(block_size):
-                if num + len(content) < block_size:
-                    buffer[num:num + len(content)] = content
-                    num += len(content)
-                else:
-                    remain = num + len(content) - block_size
-                    buffer[num:] = content[:len(content) - remain]
-                    yield buffer[:block_size]
-
-    def run(self):
-        with open(self.file_name, 'r+b') as f:
-            for i, (start, end), b in zip(self.remaining_blocks, self.ranges, self.blocks):
-                f.seek(start)
-                f.write(b)
-                self.block_map[i] = True
+import workers
 
 
 def create_file(file_name, content_length):
@@ -80,7 +36,7 @@ def download_url(url, num_threads, resume):
         print('HTTP range request not supported, ignore -c')
         resume = False
 
-    num_blocks = int(math.ceil(content_length / DEFAULT_BLOCK_SIZE))
+    num_blocks = int(math.ceil(content_length / workers.DEFAULT_BLOCK_SIZE))
     print(f'Split file into {num_blocks} blocks')
 
     if resume and os.path.exists(file_name) and os.path.getsize(file_name) == content_length + num_blocks:
@@ -94,17 +50,23 @@ def download_url(url, num_threads, resume):
         block_map = [False] * num_blocks
 
     print('Downloading file')
-    num_threads = num_threads if accept_ranges else 1
-    remaining_blocks = [i for i, b in enumerate(block_map) if not b]
-    blocks_for_worker = int(math.ceil(len(remaining_blocks) / num_threads))
-    try:
-        start = time.time()
+    accept_ranges = False
+    if accept_ranges:
+        num_threads = num_threads if accept_ranges else 1
+        remaining_blocks = [i for i, b in enumerate(block_map) if not b]
+        blocks_for_worker = int(math.ceil(len(remaining_blocks) / num_threads))
         threads = []
         for i in range(num_threads):
-            t = Worker(url, file_name, content_length, block_map,
-                       remaining_blocks[i * blocks_for_worker:min(len(block_map), (i + 1) * blocks_for_worker)])
-            t.start()
+            t = workers.RangeWorker(url, file_name, content_length, block_map,
+                                    remaining_blocks[
+                                    i * blocks_for_worker:min(len(block_map), (i + 1) * blocks_for_worker)])
             threads.append(t)
+    else:
+        threads = [workers.ContentWorker(url, file_name, content_length, block_map)]
+    try:
+        start = time.time()
+        for t in threads:
+            t.start()
         while any(t.is_alive() for t in threads):
             print(''.join('*' if b else '-' for b in block_map))
             time.sleep(0.5)
