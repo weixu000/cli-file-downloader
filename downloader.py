@@ -10,14 +10,20 @@ import os
 import workers
 
 
-def create_file(file_name, content_length):
+def create_file(file_name, size):
+    """
+    Create file of specified size
+    """
     with open(file_name, 'wb') as f:
-        if content_length:
-            f.seek(content_length - 1)
+        if size:
+            f.seek(size - 1)
             f.write(b'\x00')
 
 
 def get_metadata(url):
+    """
+    Send HEAD request to get infomation of the file
+    """
     headers = requests.head(url).headers
     content_length = int(headers['Content-Length'])
     accept_ranges = headers.get('Accept-Ranges', 'none') == 'bytes'
@@ -50,9 +56,8 @@ def download_url(url, num_threads, resume):
         block_map = [False] * num_blocks
 
     print('Downloading file')
-    accept_ranges = False
-    if accept_ranges:
-        num_threads = num_threads if accept_ranges else 1
+    if accept_ranges and num_threads > 1:
+        # Assign equal number of unfinished blocks to each worker
         remaining_blocks = [i for i, b in enumerate(block_map) if not b]
         blocks_for_worker = int(math.ceil(len(remaining_blocks) / num_threads))
         threads = []
@@ -64,6 +69,7 @@ def download_url(url, num_threads, resume):
     else:
         threads = [workers.ContentWorker(url, file_name, content_length, block_map)]
     try:
+        # Display the progress in main thread
         start = time.time()
         for t in threads:
             t.start()
