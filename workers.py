@@ -105,7 +105,7 @@ class Worker(threading.Thread, ABC):
                 self.block_map[i] = True
 
 
-class ContentWorker(Worker):
+class WholeWorker(Worker):
     def __init__(self, url, file_name, content_length, block_map):
         # Unset the whole block map since we cannot resume
         # Block map here is only to show the progress

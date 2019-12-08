@@ -11,6 +11,7 @@ import workers
 def create_file(file_name, size):
     """
     Create file of specified size
+    Discard existing file
     """
     assert not os.path.exists(file_name)
     with open(file_name, 'wb') as f:
@@ -31,9 +32,9 @@ def get_metadata(url):
 
 def download_url(url, num_threads, resume, download_to):
     url_components = urllib.parse.urlparse(url)
-    file_name = os.path.basename(urllib.parse.unquote(url_components.path)) or 'index.html'
-    file_name = os.path.join(download_to, file_name)
-    print(f'Trying to download {url} to {os.path.abspath(file_name)}')
+    file_path = os.path.basename(urllib.parse.unquote(url_components.path)) or 'index.html'
+    file_path = os.path.join(download_to, file_path)
+    print(f'Trying to download {url} to {os.path.abspath(file_path)}')
 
     print('Fetching metadata of the file')
     try:
@@ -52,13 +53,13 @@ def download_url(url, num_threads, resume, download_to):
 
     if resume:
         try:
-            block_map = workers.get_block_map(file_name, content_length, num_blocks)
-        except RuntimeError:
+            block_map = workers.get_block_map(file_path, content_length, num_blocks)
+        except:
             print("Partial file corrupted, ignore -c")
             resume = False
     if not resume:
         print('Creating file')
-        create_file(file_name, content_length)
+        create_file(file_path, content_length)
         block_map = [False] * num_blocks
 
     print('Downloading file')
@@ -66,10 +67,10 @@ def download_url(url, num_threads, resume, download_to):
         # Assign equal number of unfinished blocks to each worker
         threads = []
         for blocks in workers.split_remaining_blocks(block_map, num_threads):
-            t = workers.RangeWorker(url, file_name, content_length, block_map, blocks)
+            t = workers.RangeWorker(url, file_path, content_length, block_map, blocks)
             threads.append(t)
     else:
-        threads = [workers.ContentWorker(url, file_name, content_length, block_map)]
+        threads = [workers.WholeWorker(url, file_path, content_length, block_map)]
     try:
         # Display the progress in main thread
         start = time.time()
@@ -82,12 +83,12 @@ def download_url(url, num_threads, resume, download_to):
             t.join()
         print(f'Elapsed {time.time() - start:.2f} secs')
     finally:
-        os.truncate(file_name, content_length)
+        os.truncate(file_path, content_length)
         if all(block_map):
             print('Finished downloading')
         else:
             print('Append data to resume')
-            with open(file_name, 'ab') as f:
+            with open(file_path, 'ab') as f:
                 f.write(bytes(block_map))
 
 
