@@ -34,23 +34,21 @@ def split_remaining_blocks(block_map, num_workers):
         yield remaining_blocks[i * blocks_each:min(len(block_map), (i + 1) * blocks_each)]
 
 
-def iter_content(response: requests.Response, size, remaining_data):
+def iter_content(response: requests.Response, size):
     """
     Wrap over requests.Response.iter_content
-    Return specific amount of data and possible remaining data
+    Return specific amount of data
     """
     buffer = bytearray(size)
-    num = len(remaining_data)
-    buffer[:num] = remaining_data
-    for content in response.iter_content(size):
-        if num + len(content) < size:
+    num = 0
+    try:
+        while num < size:
+            content = next(response.iter_content(size - num))
             buffer[num:num + len(content)] = content
             num += len(content)
-        else:
-            remain = num + len(content) - size
-            buffer[num:] = content[:len(content) - remain]
-            return buffer, content[len(content) - remain:]
-    raise RuntimeError('Content not enough')
+    except StopIteration:
+        raise RuntimeError('Content not long enough')
+    return buffer
 
 
 class Worker(threading.Thread, ABC):
@@ -113,9 +111,8 @@ class ContentWorker(Worker):
                 r = self.session.get(self.url, stream=True)
                 if r.status_code != requests.codes.ok:
                     raise RuntimeError()
-                remaining_data = b''
                 for block_id, start, end in self.ranges:
-                    block, remaining_data = iter_content(r, end - start, remaining_data)
+                    block = iter_content(r, end - start)
                     yield block_id, start, end, block
             except:
                 print(f'{self.ident} retrying {i_retry + 1} times')
@@ -140,7 +137,7 @@ class RangeWorker(Worker):
                                                   'Content-Encoding': 'identity'})
                     if r.status_code != requests.codes.partial_content:
                         continue
-                    block, _ = iter_content(r, end - start, b'')
+                    block = iter_content(r, end - start)
                     yield block_id, start, end, block
                     break
                 except:

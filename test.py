@@ -60,10 +60,9 @@ class TestWorker(unittest.TestCase):
 
         dummy = DummyClass()
 
-        remaining_data = b''
         ret = b''
         for i in range(content_length // block_size):
-            block, remaining_data = workers.iter_content(dummy, block_size, remaining_data)
+            block = workers.iter_content(dummy, block_size)
             self.assertEqual(len(block), block_size)
             ret += block
         self.assertEqual(content, ret)
