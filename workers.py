@@ -51,6 +51,17 @@ def iter_content(response: requests.Response, size):
     return buffer
 
 
+def iter_lines(response: requests.Response):
+    """
+    Wrap over requests.Response.iter_content
+    Return one line without \r\n
+    """
+    buffer = b''
+    while buffer[-2:] != b'\r\n':
+        buffer += iter_content(response, 1)
+    return buffer[:-2]
+
+
 class Worker(threading.Thread, ABC):
     """
     Base class for workers to download and write to disk
@@ -105,17 +116,19 @@ class ContentWorker(Worker):
 
     @property
     def blocks(self):
-        # Request the whole file
+        """
+        Request the whole file
+        """
         for i_retry in range(RETRY):
             try:
                 r = self.session.get(self.url, stream=True)
-                if r.status_code != requests.codes.ok:
-                    raise RuntimeError()
+                r.raise_for_status()
                 for block_id, start, end in self.ranges:
                     block = iter_content(r, end - start)
                     yield block_id, start, end, block
             except:
                 print(f'{self.ident} retrying {i_retry + 1} times')
+                # Restart from the first range
             else:
                 break
         else:
@@ -128,19 +141,33 @@ class RangeWorker(Worker):
 
     @property
     def blocks(self):
-        # Request specific range of the file
-        for block_id, start, end in self.ranges:
-            for i_retry in range(RETRY):
-                try:
-                    r = self.session.get(self.url, stream=True,
-                                         headers={'Range': f'bytes={start}-{end - 1}',
-                                                  'Content-Encoding': 'identity'})
-                    if r.status_code != requests.codes.partial_content:
-                        continue
+        """
+        Request multiples ranges of the file
+        """
+        ranges = list(self.ranges)
+        i_ranges = 0  # ranges to be download
+
+        for i_retry in range(RETRY):
+            try:
+                range_header = 'bytes=' + ', '.join(f'{start}-{end - 1}' for _, start, end in ranges[i_ranges:])
+                r = self.session.get(self.url, stream=True,
+                                     headers={'Range': range_header,
+                                              'Content-Encoding': 'identity'})
+                r.raise_for_status()
+                content_type, boundary = r.headers['Content-Type'].split('; boundary=')
+                while i_ranges < len(ranges):
+                    block_id, start, end = ranges[i_ranges]
+                    while iter_lines(r) != b'--' + boundary.encode():  # find the next part
+                        pass
+                    while iter_lines(r) != b'':
+                        pass  # ignore header of this part
                     block = iter_content(r, end - start)
                     yield block_id, start, end, block
-                    break
-                except:
-                    print(f'{self.ident} retrying {i_retry + 1} times')
+                    i_ranges += 1
+            except:
+                print(f'{self.ident} retrying {i_retry + 1} times')
+                # Start from i_ranges
             else:
-                print(f'{self.ident} retry failed')
+                break
+        else:
+            print(f'{self.ident} retry failed')
