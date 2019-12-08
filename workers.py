@@ -24,6 +24,12 @@ def get_block_map(file_name, content_length, num_blocks):
         return [bool(b) for b in f.read(num_blocks)]
 
 
+def set_block_map(file_name, content_length, block_map):
+    with open(file_name, 'r+b') as f:
+        f.seek(content_length)
+        f.write(bytes(block_map))
+
+
 def split_remaining_blocks(block_map, num_workers):
     """
     Find unfinished blocks and split into equal shares
