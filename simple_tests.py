@@ -7,6 +7,7 @@ import multiprocessing
 import time
 import signal
 
+import blockmap
 import downloader
 import workers
 
@@ -35,7 +36,7 @@ class TestBlockMap(unittest.TestCase):
             with open(output_file, 'wb') as f:
                 f.write(b'\x00' * file_size)
                 f.write(bytes(block_map))
-            ret = workers.get_block_map(output_file, file_size, len(block_map))
+            ret = blockmap.get_block_map(output_file, file_size, len(block_map))
             self.assertEqual(ret, block_map)
 
     def test_load_block_map_corrupted(self):
@@ -47,13 +48,13 @@ class TestBlockMap(unittest.TestCase):
             file_size = random.randrange(100)
             block_map = [bool(random.randrange(2)) for _ in range(random.randrange(1, 100))]
             with self.assertRaises(Exception):  # Nonexistent file
-                workers.get_block_map(output_file, file_size, len(block_map))
+                blockmap.get_block_map(output_file, file_size, len(block_map))
 
             with open(output_file, 'wb') as f:  # Unfinished file
                 f.write(b'\x00' * file_size)
                 # No block map
             with self.assertRaises(Exception):
-                workers.get_block_map(output_file, file_size, len(block_map))
+                blockmap.get_block_map(output_file, file_size, len(block_map))
 
     def test_split_blocks(self):
         """
@@ -62,7 +63,7 @@ class TestBlockMap(unittest.TestCase):
         num_workers = random.randrange(1, 100)
         block_map = [bool(random.randrange(2)) for _ in range(num_workers * random.randrange(1, 100))]
 
-        splits = list(workers.split_remaining_blocks(block_map, num_workers))
+        splits = list(blockmap.split_remaining_blocks(block_map, num_workers))
         self.assertEqual(sum(splits, []), [i for i, b in enumerate(block_map) if not b])
 
 
@@ -117,7 +118,7 @@ class TestWorker(unittest.TestCase):
                 content_length, _ = downloader.get_metadata(URL)
                 file_path = os.path.join(temp_dir, downloader.get_file_name(URL))
                 downloader.create_file(file_path, content_length)
-                num_blocks = workers.get_num_blocks(content_length)
+                num_blocks = blockmap.get_num_blocks(content_length)
                 t = workers.RangeWorker(URL, file_path, content_length,
                                         [False] * num_blocks, list(range(num_blocks)))
                 t.run()
@@ -132,7 +133,7 @@ class TestWorker(unittest.TestCase):
                 content_length, _ = downloader.get_metadata(URL)
                 file_path = os.path.join(temp_dir, downloader.get_file_name(URL))
                 downloader.create_file(file_path, content_length)
-                num_blocks = workers.get_num_blocks(content_length)
+                num_blocks = blockmap.get_num_blocks(content_length)
                 t = workers.WholeWorker(URL, file_path, content_length, [False] * num_blocks)
                 t.run()
                 self.assertEqual(file_SHA256(file_path), SHA256)

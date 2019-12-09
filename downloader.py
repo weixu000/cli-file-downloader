@@ -5,6 +5,7 @@ import os.path
 import time
 import os
 
+import blockmap
 import workers
 
 
@@ -38,6 +39,11 @@ def get_metadata(url):
 
 
 def download_url(url, num_threads, resume, download_to):
+    # Get scheme if there is none
+    if not urllib.parse.urlparse(url).scheme:
+        r = requests.head(f'http://{url}', allow_redirects=True)
+        url = r.url
+
     file_path = os.path.join(download_to, get_file_name(url))
     print(f'Trying to download {url} to {os.path.abspath(file_path)}')
 
@@ -59,12 +65,12 @@ def download_url(url, num_threads, resume, download_to):
 
     partial_file_path = f'{file_path}.partial'  # Use another file to append block map
 
-    num_blocks = workers.get_num_blocks(content_length)
+    num_blocks = blockmap.get_num_blocks(content_length)
     print(f'Split file into {num_blocks} blocks')
 
     if resume:
         try:
-            block_map = workers.get_block_map(partial_file_path, content_length, num_blocks)
+            block_map = blockmap.get_block_map(partial_file_path, content_length, num_blocks)
         except:
             print("Cannot read partial file, ignore -c")
             resume = False
@@ -76,7 +82,7 @@ def download_url(url, num_threads, resume, download_to):
     if accept_ranges:
         # Assign equal number of unfinished blocks to each worker
         threads = []
-        for blocks in workers.split_remaining_blocks(block_map, num_threads):
+        for blocks in blockmap.split_remaining_blocks(block_map, num_threads):
             t = workers.RangeWorker(url, partial_file_path, content_length, block_map, blocks)
             threads.append(t)
     else:
@@ -101,7 +107,7 @@ def download_url(url, num_threads, resume, download_to):
             os.replace(partial_file_path, file_path)  # Rename to the file itself
         else:
             print('Append data to resume')
-            workers.set_block_map(partial_file_path, content_length, block_map)
+            blockmap.set_block_map(partial_file_path, content_length, block_map)
 
 
 def main():
