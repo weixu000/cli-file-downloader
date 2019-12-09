@@ -3,6 +3,9 @@ import unittest
 import tempfile
 import os
 import random
+import multiprocessing
+import time
+import signal
 
 import downloader
 import workers
@@ -63,10 +66,14 @@ class TestBlockMap(unittest.TestCase):
         self.assertEqual(sum(splits, []), [i for i, b in enumerate(block_map) if not b])
 
 
-# Use file on the web
-URL = 'https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe'
-FILE_NAME = 'Miniconda3-latest-Windows-x86_64.exe'
-SHA256 = 'f18060cc0bb50ae75e4d602b7ce35197c8e31e81288d069b758594f1bb46ab45'
+# Use files on the web
+# Don't think it's a good idea
+TEST_FILES = [
+    ('https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh',
+     'bfe34e1fa28d6d75a7ad05fd02fa5472275673d5f5621b77380898dee1be15d2'),
+    ('https://nodejs.org/dist/v13.3.0/node-v13.3.0-linux-x64.tar.gz',
+     '155b0510732d2f48150dc6bc4b25eb44ce5cd54d21c70d2ca7f31be3b9ab7fa6')
+]
 
 
 class TestWorker(unittest.TestCase):
@@ -106,34 +113,55 @@ class TestWorker(unittest.TestCase):
         Test workers.RangeWorker
         """
         with tempfile.TemporaryDirectory() as temp_dir:
-            content_length, _ = downloader.get_metadata(URL)
-            file_path = os.path.join(temp_dir, FILE_NAME)
-            downloader.create_file(file_path, content_length)
-            num_blocks = workers.get_num_blocks(content_length)
-            t = workers.RangeWorker(URL, file_path, content_length,
-                                    [False] * num_blocks, list(range(num_blocks)))
-            t.run()
-            self.assertEqual(file_SHA256(file_path), SHA256)
+            for URL, SHA256 in TEST_FILES:
+                content_length, _ = downloader.get_metadata(URL)
+                file_path = os.path.join(temp_dir, downloader.get_file_name(URL))
+                downloader.create_file(file_path, content_length)
+                num_blocks = workers.get_num_blocks(content_length)
+                t = workers.RangeWorker(URL, file_path, content_length,
+                                        [False] * num_blocks, list(range(num_blocks)))
+                t.run()
+                self.assertEqual(file_SHA256(file_path), SHA256)
 
     def test_whole_walker(self):
         """
         Test workers.WholeWorker
         """
         with tempfile.TemporaryDirectory() as temp_dir:
-            content_length, _ = downloader.get_metadata(URL)
-            file_path = os.path.join(temp_dir, FILE_NAME)
-            downloader.create_file(file_path, content_length)
-            num_blocks = workers.get_num_blocks(content_length)
-            t = workers.WholeWorker(URL, file_path, content_length, [False] * num_blocks)
-            t.run()
-            self.assertEqual(file_SHA256(file_path), SHA256)
+            for URL, SHA256 in TEST_FILES:
+                content_length, _ = downloader.get_metadata(URL)
+                file_path = os.path.join(temp_dir, downloader.get_file_name(URL))
+                downloader.create_file(file_path, content_length)
+                num_blocks = workers.get_num_blocks(content_length)
+                t = workers.WholeWorker(URL, file_path, content_length, [False] * num_blocks)
+                t.run()
+                self.assertEqual(file_SHA256(file_path), SHA256)
 
 
 class TestDownloader(unittest.TestCase):
-    def test_multithreaded(self):
+    def test_download(self):
+        """
+        Test downloader.download_url from start
+        """
         with tempfile.TemporaryDirectory() as temp_dir:
-            downloader.download_url(URL, 5, False, temp_dir)
-            self.assertEqual(file_SHA256(os.path.join(temp_dir, FILE_NAME)), SHA256)
+            for URL, SHA256 in TEST_FILES:
+                p = multiprocessing.Process(target=downloader.download_url, args=(URL, 5, False, temp_dir))
+                p.start()
+                p.join()
+                self.assertEqual(file_SHA256(os.path.join(temp_dir, downloader.get_file_name(URL))), SHA256)
+
+    def test_resume_download(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for URL, SHA256 in TEST_FILES:
+                p = multiprocessing.Process(target=downloader.download_url, args=(URL, 5, True, temp_dir))
+                p.start()
+                time.sleep(5)
+                os.kill(p.pid, signal.SIGINT)  # not in windows
+                p.join()
+                p = multiprocessing.Process(target=downloader.download_url, args=(URL, 5, True, temp_dir))
+                p.start()
+                p.join()
+                self.assertEqual(file_SHA256(os.path.join(temp_dir, downloader.get_file_name(URL))), SHA256)
 
 
 if __name__ == '__main__':

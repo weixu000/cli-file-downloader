@@ -19,6 +19,14 @@ def create_file(file_name, size):
             f.write(b'\x00')
 
 
+def get_file_name(url):
+    """
+    Get file name from the URL
+    """
+    url_components = urllib.parse.urlparse(url)
+    return os.path.basename(urllib.parse.unquote(url_components.path)) or 'index.html'
+
+
 def get_metadata(url):
     """
     Send HEAD request to get infomation of the file
@@ -30,9 +38,7 @@ def get_metadata(url):
 
 
 def download_url(url, num_threads, resume, download_to):
-    url_components = urllib.parse.urlparse(url)
-    file_path = os.path.basename(urllib.parse.unquote(url_components.path)) or 'index.html'
-    file_path = os.path.join(download_to, file_path)
+    file_path = os.path.join(download_to, get_file_name(url))
     print(f'Trying to download {url} to {os.path.abspath(file_path)}')
 
     if os.path.exists(file_path):
@@ -66,7 +72,7 @@ def download_url(url, num_threads, resume, download_to):
         create_file(partial_file_path, content_length)
         block_map = [False] * num_blocks
 
-    print('Downloading file')
+    print('Downloading file, Ctrl-C to stop')
     if accept_ranges:
         # Assign equal number of unfinished blocks to each worker
         threads = []
@@ -86,11 +92,13 @@ def download_url(url, num_threads, resume, download_to):
         for t in threads:
             t.join()
         print(f'Elapsed {time.time() - start:.2f} secs')
+    except KeyboardInterrupt:  # Ctrl-C
+        print('Stop downloading')
     finally:
         if all(block_map):
             print('Finished downloading')
             os.truncate(partial_file_path, content_length)  # Remove block map
-            os.replace(partial_file_path, file_path)  # Rename
+            os.replace(partial_file_path, file_path)  # Rename to the file itself
         else:
             print('Append data to resume')
             workers.set_block_map(partial_file_path, content_length, block_map)
