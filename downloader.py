@@ -99,7 +99,9 @@ def download_url(url, num_threads, resume, download_to):
             t.join()
         print(f'Elapsed {time.time() - start:.2f} secs')
     except KeyboardInterrupt:  # Ctrl-C
-        print('Stop downloading')
+        print("Gracefully stop workers")
+        for t in threads:
+            t.stop()
     finally:
         if all(block_map):
             print('Finished downloading')

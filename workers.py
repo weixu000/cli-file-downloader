@@ -42,13 +42,21 @@ class Worker(threading.Thread, ABC):
     """
 
     def __init__(self, url, file_name, content_length, block_map, remaining_blocks):
-        super().__init__(daemon=True)
+        super().__init__()
         self.session = requests.Session()
         self.url = url
         self.file_name = file_name
         self.block_map = block_map
         self.content_length = content_length
         self.remaining_blocks = remaining_blocks
+        self.stop_event = threading.Event()
+
+    def stop(self):
+        """
+        Stop the worker
+        Keep self.block_map consistent
+        """
+        self.stop_event.set()
 
     @property
     def ranges(self):
@@ -74,6 +82,8 @@ class Worker(threading.Thread, ABC):
         """
         with open(self.file_name, 'r+b') as f:
             for i, start, end, b in self.blocks:
+                if self.stop_event.wait(0):
+                    break  # stop downloading
                 f.seek(start)
                 f.write(b)
                 self.block_map[i] = True

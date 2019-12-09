@@ -53,6 +53,7 @@ Being too large makes resuming download useless, while being too small makes net
 - Python thread is not true thread so by itself CPU overhead is not serious, it is suitable for IO intensive tasks.
 - Disk IO is inherent for download and block map is small relative to file.
 - Network IO is minimal by using range requests but setting up too many connections may impede performance.
+- Use `threading.Event` to gracefully stop workers
 - Use `requests` to handle basic HTTP stuff.
 - Do not overwrite exisiting file to avoid users' misuse.
 - Find the scheme of URL and file name of file for easier use.
